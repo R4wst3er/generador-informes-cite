@@ -1,0 +1,78 @@
+# Construye el instalador de Windows cada vez que se publica una versión («Release») en GitHub
+# y lo adjunta a esa misma versión. Los programas ya instalados lo descargan desde ahí.
+name: Publicar instalador
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write # necesario para adjuntar el instalador a la versión
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    env:
+      ETIQUETA: ${{ github.event.release.tag_name }}
+      REPOSITORIO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller reportlab pypdf
+
+      - name: Pruebas (informativas)
+        # Si alguna falla no se cancela la publicación, pero queda a la vista en el registro del flujo
+        continue-on-error: true
+        run: python -m unittest discover -s tests
+
+      - name: Poner la versión y el repositorio en el programa
+        run: python empaquetado/preparar_version.py "$ETIQUETA" "$REPOSITORIO" >> "$GITHUB_ENV"
+
+      - name: Construir el programa (PyInstaller)
+        run: pyinstaller --noconfirm --clean empaquetado/GeneradorInformes.spec
+
+      - name: Comprobar que el programa construido existe
+        run: test -f dist/GeneradorInformes/GeneradorInformes.exe
+
+      - name: Instalar Inno Setup (si no viene en la máquina)
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { choco install innosetup --yes --no-progress }
+          if (-not (Test-Path $iscc)) { throw 'No se encontró ISCC.exe de Inno Setup' }
+
+      - name: Crear el instalador
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          & $iscc "/DVersion=$env:VERSION" empaquetado\instalador.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup falló (código $LASTEXITCODE)" }
+
+      - name: Calcular la huella de seguridad (SHA-256)
+        run: |
+          cd dist-instalador
+          archivo="GeneradorInformes-Setup-${VERSION}.exe"
+          test -f "$archivo"
+          sha256sum "$archivo" > "$archivo.sha256"
+          cat "$archivo.sha256"
+
+      - name: Adjuntar a la versión publicada
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            dist-instalador/GeneradorInformes-Setup-${{ env.VERSION }}.exe
+            dist-instalador/GeneradorInformes-Setup-${{ env.VERSION }}.exe.sha256
