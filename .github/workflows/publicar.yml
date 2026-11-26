@@ -1,5 +1,5 @@
 # Construye el instalador de Windows cada vez que se publica una versión («Release») en GitHub
-# y lo adjunta a esa misma versión. Los programas ya instalados lo descargan desde ahí.
+# y lo adjunta a esa misma versión. Los programas ya instalados lo descargan desde ahí .
 name: Publicar instalador
 
 on:
